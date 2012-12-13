@@ -21,30 +21,44 @@ def knn_search(x, D, K):
  
 #import opengm
 inputFolder='/home/tbeier/Desktop/img'
-imagePath='/home/tbeier/Desktop/img/302003.jpg'
-outputImage='/home/tbeier/Desktop/mosaik4.png'
-labels=5
-labelChangeRuns=10
-uniqueRadius=2
-patchSize=[30,30]
+imagePath='/home/tbeier/Desktop/img/258089.jpg'
+outputImage='/home/tbeier/Desktop/a3.png'
+labels=50
+patchSize=[35,35]
+numPatchesX=160
+mixing=0.001
 
-
-numPatchesX=80
-
-mixing=0.3
+#noise trick
+sigma=10
 
 
 images=[]
 os.chdir(inputFolder)
+i=0
 for imgPath in glob.glob("*.jpg"):
     img=vigra.impex.readImage(imgPath)
     img=vigra.sampling.resizeImageSplineInterpolation(img,patchSize)
     images.append(img)
-    print imgPath
+    i+=1
+    if(i%10==0):
+		print imgPath
+    
 
 image=vigra.impex.readImage(imagePath)
 numPatches=[numPatchesX,int(numPatchesX*(float(image.shape[1])/float(image.shape[0]))+0.5)]
 image=vigra.sampling.resizeImageSplineInterpolation(image,numPatches)
+dimX=image.shape[0]
+dimY=image.shape[1]
+numPixels=dimX*dimY
+
+noiseImage=image.copy()
+noise=sigma * numpy.random.randn(numPixels*3)
+noise=noise.reshape([dimX,dimY,3])
+noiseImage+=noise
+for c in range(3):
+	noiseImage[numpy.where(noiseImage>255)]=255
+	noiseImage[numpy.where(noiseImage<0)]=0	
+
 
 labelMap=numpy.ones([numPatches[0],numPatches[1],2],dtype=numpy.uint32)
 finalImageRaw=vigra.sampling.resizeImageSplineInterpolation(image,[numPatches[0]*patchSize[0],numPatches[1]*patchSize[1]])
@@ -56,9 +70,7 @@ print "imageSize: ",image.shape
 means=numpy.ones([len(images),3])
 candidatesAndDist=[]
 
-dimX=image.shape[0]
-dimY=image.shape[1]
-numPixels=dimX*dimY
+
 
 
 localCandidateLabels=[]
@@ -70,41 +82,16 @@ for i in range(len(images)):
 		  
 print "find KNN for each pixel"
 for y in range(image.shape[1]):
-	if y%50==0 :print y
-	for x in range(image.shape[0]):
-	   pixelValue=image[x,y,:]
-	   localCandidateLabels.append(knn_search(pixelValue,means,labels))
-	   labelMap[x,y,0]=localCandidateLabels[x+y*image.shape[0]][0][0]
-	   newLabel=numpy.random.randint(0,labels)
-	   newLabel=localCandidateLabels[x+y*image.shape[0]][0][newLabel]	
-	   labelMap[x,y,0]=newLabel
-	   labelMap[x,y,1]=0
-	   finalImage[  x*patchSize[0]:(x+1)*patchSize[0],y*patchSize[1]:(y+1)*patchSize[1],: ]=images[localCandidateLabels[-1][0][0]][:,:,:]
-
-print "remove bad labeling"
-numChanges=0
-for y in range(image.shape[1]):
-	if y%50==0 :print y
-	for x in range(image.shape[0]):
-		label=labelMap[x,y,0]
-		change=False
-		if(x+1<image.shape[0]):
-			if(labelMap[x+1,y,0]==label):
-				change=True
-		if(y+1<image.shape[1]):
-			if(labelMap[x,y+1,0]==label):
-				change=True	
-		if(x+1<image.shape[0] and y+1<image.shape[1]):
-			if(labelMap[x+1,y+1,0]==label):
-				change=True
-	if(change==True):
-		numChanges+=1
-		newLabel=label
-		while(	newLabel ==label):
-			newLabel=numpy.random.randint(0,labels)
-			newLabel=localCandidateLabels[x+y*image.shape[0]][0][newLabel]	
-	labelMap[x,y,0]=newLabel
-print "numberOfChanges", numChanges	
+	if y%50==0 :
+        print y
+    for x in range(image.shape[0]):
+       pixelValue=noiseImage[x,y,:]
+       localCandidateLabels.append(knn_search(pixelValue,means,labels))
+       labelMap[x,y,0]=localCandidateLabels[x+y*image.shape[0]][0][0]
+       newLabel=numpy.random.randint(0,labels)
+       newLabel=localCandidateLabels[x+y*image.shape[0]][0][newLabel]	
+       labelMap[x,y,0]=newLabel
+       labelMap[x,y,1]=0
 
 print "write final image"
 for y in range(image.shape[1]):
