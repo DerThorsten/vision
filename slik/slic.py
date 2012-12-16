@@ -7,7 +7,8 @@ import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
-
+# make a region graph in pure python ,the code fore the region graph is from
+# http://peekaboo-vision.blogspot.de/2011/08/region-connectivity-graphs-in-python.html
 def make_graph(grid):
     # get unique labels
     vertices = numpy.unique(grid)
