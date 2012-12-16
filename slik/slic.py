@@ -1,9 +1,36 @@
 import numpy
 import vigra
+#timing
+import time
 #dispaly image
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
+
+
+def make_graph(grid):
+    # get unique labels
+    vertices = numpy.unique(grid)
+ 
+    # map unique labels to [1,...,num_labels]
+    reverse_dict = dict(zip(vertices,numpy.arange(len(vertices))))
+    grid = numpy.array([reverse_dict[x] for x in grid.flat]).reshape(grid.shape)
+   
+    # create edges
+    down = numpy.c_[grid[:-1, :].ravel(), grid[1:, :].ravel()]
+    right = numpy.c_[grid[:, :-1].ravel(), grid[:, 1:].ravel()]
+    all_edges = numpy.vstack([right, down])
+    all_edges = all_edges[all_edges[:, 0] != all_edges[:, 1], :]
+    all_edges = numpy.sort(all_edges,axis=1)
+    num_vertices = len(vertices)
+    edge_hash = all_edges[:,0] + num_vertices * all_edges[:, 1]
+    # find unique connections
+    edges = numpy.unique(edge_hash)
+    # undo hashing
+    edges = [[vertices[x%num_vertices],
+              vertices[x/num_vertices]] for x in edges]
+ 
+    return vertices, edges , reverse_dict
 
 class Slic():
     def __init__(self,img,k,weight,gradmag,rMinSearch=2):
@@ -83,14 +110,18 @@ class Slic():
             centerIndex+=1    
 
     def iterate(self,iterations=10):
+        breaked=False
         for i in range(iterations):
             #print "updateAssignments"
             numUpdates=self.updateAssignments()
             print "num updates ",numUpdates
             if numUpdates==0:
+                breaked=True
                 break
-            self.updateCenters() 
-    
+            self.updateCenters()
+        if(breaked==False):
+            self.updateAssignments()     
+            
 
     def computeDistance(self,center,pixels):
         distance=numpy.ones(pixels.shape,dtype=numpy.float32)
@@ -100,8 +131,9 @@ class Slic():
         #compute distance!
         ##################
         distance-=pixels
-        distance[:,:,3:5]*=self.weight
-        distance=numpy.sqrt(numpy.sum(distance**2,2));
+        distC=numpy.sum(distance[:,:,0:3]**2,2);
+        distS=numpy.sum(distance[:,:,3:5]**2,2);
+        distance=numpy.sqrt( distC  + distS/(float(self.centerDists[0])**2)*(self.weight**2) )
         return distance
     def updateAssignments(self):
         centerIndex=0
@@ -154,25 +186,73 @@ class Slic():
             if(len(ownMembersCoordinates[0])>0):
                 self.centerMeans[centerIndex,:]=numpy.mean(subData[ownMembersCoordinates],0)
             centerIndex+=1
-    def relabel(self):
-        
-        self.labels=self.labels.astype(numpy.uint32)
-        print "shape",self.labels.shape
-        print "dtype",self.labels.dtype
-        self.labelImage=vigra.analysis.labelImage(self.labels.astype(numpy.float32))
-        self.numSuperPixel=numpy.max(self.labelImage)
+    def relabel(self,threshold):
+        numRelabeling=1
+        while(numRelabeling!=0):
+            numRelabeling=self.relabelIt(self.labels,threshold)
+            print "num relabelings=",numRelabeling
+            self.labels[:,:]=self.finalLabels
+
+    def relabelIt(self,labels,threshold):
+        numRelabeling=0
+        self.labelImage=vigra.analysis.labelImage(labels.astype(numpy.float32))
+        self.labelImage=self.labelImage.astype(numpy.uint32)
+        self.labelImage-=1
+        self.finalLabels=self.labelImage.copy()
+        #find member
+        [vertices,edges,revdict]=make_graph(self.labelImage)
+        #inverse adj.
+        regionsEdges=dict((k, []) for k in vertices)
+        edgeIndex=0
+        for edge in edges:
+            regionsEdges[edge[0]].append(edgeIndex)
+            regionsEdges[edge[1]].append(edgeIndex)
+            edgeIndex+=1
+        centerSizes = dict()
+        coords={}
+        coords=dict((k, [[],[]]) for k in vertices)
+        for x in range(self.shape[0]):
+            for y in range(self.shape[1]):    
+                coords[self.labelImage[x,y]][0].append(x)
+                coords[self.labelImage[x,y]][1].append(y)
+        mergedRegions=set()        
+        for centerIndex in vertices:
+            size=len(coords[centerIndex][0])
+            #print size
+            if(size<threshold and (centerIndex not in mergedRegions) ):
+                numRelabeling+=1
+                redges=regionsEdges[centerIndex]
+                maxSize=0;
+                maxIndex=-1;
+                for edge in redges:
+                    assert len(edges[edge])==2
+                    r=edges[edge][0]
+                    r2=edges[edge][1]
+                    if r==centerIndex:
+                        r=r2
+                    sizeReg=len(coords[r][0])
+                    if sizeReg>maxSize:
+                        maxSize=sizeReg
+                        maxIndex=r
+                mergedRegions.add(r)
+                mergedRegions.add(centerIndex)
+                self.finalLabels[coords[centerIndex]]=r             
+
+        self.numSuperPixel=len(numpy.unique(self.finalLabels))
+        return numRelabeling
 
                     
-img=vigra.impex.readImage('/home/tbeier/Desktop/img/12003.jpg')
+img=vigra.impex.readImage('/home/tbeier/Desktop/BSDS300/images/train/8143.jpg')
 gradmag=vigra.filters.gaussianGradientMagnitude(img,1.5)
 
 k=1000
-slic=Slic(img,k,2,gradmag)
-slic.iterate(15)
-slic.relabel()
+slic=Slic(img,k,40,gradmag)
+slic.iterate(4)
+slic.relabel(6)
 print "number of superpixels ",slic.numSuperPixel
-labels=slic.labelImage
+labels=slic.finalLabels
 # plot labels
-cmap = matplotlib.colors.ListedColormap ( numpy.random.rand ( int(k*1.2),3))
-plt.imshow(labels,cmap)
+cmap = matplotlib.colors.ListedColormap ( numpy.random.rand ( int(k*4),3))
+#plt.imshow(slic.labelImage,cmap)
+plt.imshow(slic.finalLabels,cmap)
 plt.show()    
